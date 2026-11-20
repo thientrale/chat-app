@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realtime Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Tùy chỉnh thanh cuộn gọn gàng */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100 h-screen flex items-center justify-center p-2 sm:p-4 font-sans">
+
+  <!-- MÀN HÌNH ĐĂNG NHẬP / CHỌN TÊN -->
+  <div id="login-screen" class="bg-white p-8 rounded-2xl shadow-lg max-w-md w-full text-center space-y-6">
+    <div>
+      <div class="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold shadow-md">
+        💬
+      </div>
+      <h1 class="text-2xl font-bold text-slate-800">Phòng Chat Realtime</h1>
+      <p class="text-slate-500 text-sm mt-1">Kết nối trực tiếp với bạn bè</p>
+    </div>
+
+    <!-- Đăng nhập Google -->
+    <button id="google-login-btn" class="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2.5 px-4 rounded-xl transition shadow-sm">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5" alt="Google" />
+      Tiếp tục với Google
+    </button>
+
+    <div class="relative flex py-1 items-center">
+      <div class="flex-grow border-t border-slate-200"></div>
+      <span class="flex-shrink mx-4 text-slate-400 text-xs uppercase">Hoặc vào nhanh</span>
+      <div class="flex-grow border-t border-slate-200"></div>
+    </div>
+
+    <!-- Nhập nickname (Anonymous) -->
+    <form id="guest-form" class="space-y-3">
+      <input type="text" id="guest-name-input" placeholder="Nhập biệt danh của bạn..." required maxlength="25"
+        class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+      <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-xl transition shadow-sm">
+        Vào phòng chat ngay
+      </button>
+    </form>
+
+    <p id="auth-error" class="text-red-500 text-xs hidden"></p>
+  </div>
+
+  <!-- MÀN HÌNH CHAT CHÍNH -->
+  <div id="chat-screen" class="hidden bg-white rounded-2xl shadow-xl w-full max-w-3xl h-[92vh] flex flex-col overflow-hidden border border-slate-200">
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 px-5 py-3.5 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+        <div>
+          <h2 class="font-bold text-slate-800 text-base">Phòng Chat Chung</h2>
+          <p id="current-user-label" class="text-xs text-slate-500"></p>
+        </div>
+      </div>
+      <button id="logout-btn" class="text-xs font-medium text-slate-500 hover:text-red-600 bg-slate-100 hover:bg-red-50 px-3 py-1.5 rounded-lg transition">
+        Thoát
+      </button>
+    </header>
+
+    <!-- Khung hiển thị tin nhắn -->
+    <main id="messages-container" class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50">
+      <!-- Tin nhắn sẽ được render tự động vào đây -->
+    </main>
+
+    <!-- Khung nhập tin nhắn -->
+    <footer class="bg-white border-t border-slate-200 p-3 sm:p-4">
+      <form id="message-form" class="flex items-center gap-2">
+        <input type="text" id="message-input" placeholder="Nhập tin nhắn..." autocomplete="off" required
+          class="flex-1 bg-slate-100 text-slate-800 px-4 py-2.5 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition text-sm" />
+        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 rounded-full transition shadow-sm flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
+            <path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" />
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </div>
+
+  <!-- FIREBASE LOGIC -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import { 
+      getAuth, GoogleAuthProvider, signInWithPopup, 
+      signInAnonymously, updateProfile, onAuthStateChanged, signOut 
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { 
+      getDatabase, ref, push, onChildAdded, serverTimestamp, query, limitToLast 
+    } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
+
+    // Cấu hình Firebase của bạn
+    const firebaseConfig = {
+      apiKey: "AIzaSyCaXcCGlBbPKjA5kjAAiNAU7wGeajAHHxI",
+      authDomain: "chat-2e9ca.firebaseapp.com",
+      databaseURL: "https://chat-2e9ca-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "chat-2e9ca",
+      storageBucket: "chat-2e9ca.firebasestorage.app",
+      messagingSenderId: "292543301069",
+      appId: "1:292543301069:web:a709a09457b908f8763084"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    // DOM Elements
+    const loginScreen = document.getElementById("login-screen");
+    const chatScreen = document.getElementById("chat-screen");
+    const googleLoginBtn = document.getElementById("google-login-btn");
+    const guestForm = document.getElementById("guest-form");
+    const guestNameInput = document.getElementById("guest-name-input");
+    const authError = document.getElementById("auth-error");
+    const currentUserLabel = document.getElementById("current-user-label");
+    const logoutBtn = document.getElementById("logout-btn");
+    const messagesContainer = document.getElementById("messages-container");
+    const messageForm = document.getElementById("message-form");
+    const messageInput = document.getElementById("message-input");
+
+    let isListening = false;
+
+    // Hiển thị lỗi nếu có
+    function showError(msg) {
+      authError.textContent = msg;
+      authError.classList.remove("hidden");
+    }
+
+    // 1. Đăng nhập bằng Google
+    googleLoginBtn.addEventListener("click", async () => {
+      authError.classList.add("hidden");
+      const provider = new GoogleAuthProvider();
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (err) {
+        showError("Lỗi đăng nhập Google: " + err.message + " (Hãy kiểm tra bạn đã bật Google Auth và thêm domain GitHub chưa)");
+      }
+    });
+
+    // 2. Đăng nhập nhanh bằng Nickname (Anonymous)
+    guestForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      authError.classList.add("hidden");
+      const nickname = guestNameInput.value.trim();
+      if (!nickname) return;
+
+      try {
+        const userCred = await signInAnonymously(auth);
+        await updateProfile(userCred.user, { displayName: nickname });
+        currentUserLabel.textContent = `Đang chat với tên: ${nickname}`;
+      } catch (err) {
+        showError("Lỗi vào nhanh: " + err.message + " (Hãy bật Anonymous trong Firebase Authentication)");
+      }
+    });
+
+    // Đăng xuất
+    logoutBtn.addEventListener("click", () => signOut(auth));
+
+    // Theo dõi trạng thái đăng nhập
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        loginScreen.classList.add("hidden");
+        chatScreen.classList.remove("hidden");
+        const displayName = user.displayName || guestNameInput.value.trim() || "Ẩn danh";
+        currentUserLabel.textContent = `Đang chat với tên: ${displayName}`;
+        
+        if (!isListening) {
+          listenForMessages();
+          isListening = true;
+        }
+      } else {
+        loginScreen.classList.remove("hidden");
+        chatScreen.classList.add("hidden");
+      }
+    });
+
+    // Gửi tin nhắn
+    messageForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = messageInput.value.trim();
+      const user = auth.currentUser;
+      if (!text || !user) return;
+
+      const messagesRef = ref(db, "messages");
+      push(messagesRef, {
+        uid: user.uid,
+        name: user.displayName || guestNameInput.value.trim() || "Ẩn danh",
+        photoURL: user.photoURL || "",
+        text: text,
+        timestamp: serverTimestamp()
+      });
+
+      messageInput.value = "";
+      messageInput.focus();
+    });
+
+    // Lắng nghe tin nhắn Realtime (lấy 100 tin nhắn gần nhất)
+    function listenForMessages() {
+      const messagesQuery = query(ref(db, "messages"), limitToLast(100));
+      onChildAdded(messagesQuery, (snapshot) => {
+        const data = snapshot.val();
+        renderMessage(data);
+      });
+    }
+
+    // Chống XSS khi hiển thị nội dung chat
+    function escapeHTML(str) {
+      const div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Render từng bong bóng tin nhắn
+    function renderMessage(data) {
+      const currentUser = auth.currentUser;
+      const isMe = currentUser && data.uid === currentUser.uid;
+      
+      const timeStr = data.timestamp 
+        ? new Date(data.timestamp).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) 
+        : "";
+
+      const wrapper = document.createElement("div");
+      wrapper.className = `flex flex-col ${isMe ? "items-end" : "items-start"}`;
+
+      const senderName = escapeHTML(data.name || "Ẩn danh");
+      const messageText = escapeHTML(data.text || "");
+
+      wrapper.innerHTML = `
+        <span class="text-[11px] text-slate-400 mb-1 px-1">${isMe ? "Bạn" : senderName} • ${timeStr}</span>
+        <div class="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm shadow-sm break-words ${
+          isMe 
+            ? "bg-indigo-600 text-white rounded-br-sm" 
+            : "bg-white text-slate-800 border border-slate-200 rounded-bl-sm"
+        }">
+          ${messageText}
+        </div>
+      `;
+
+      messagesContainer.appendChild(wrapper);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  </script>
+</body>
+</html>
